@@ -1,0 +1,30 @@
+﻿# 仮想環境
+.venv/
+venv/
+env/
+# Pythonキャッシュ
+__pycache__/
+*.py[cod]
+# ローカル検証用テスト・結果
+test_*.py
+*_test.py
+tests/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+# exe化の生成物（.icoは管理対象）
+build/
+dist/
+*.spec
+*.exe
+# ローカル設定・ログ
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+*.log
+.env
+.env.*
+!.env.example
