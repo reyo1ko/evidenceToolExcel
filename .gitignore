@@ -16,6 +16,8 @@ htmlcov/
 coverage.xml
 # exe化の生成物（.icoは管理対象）
 build/
+target/
+dist/
 *.spec
 *.exe
 # ローカル設定・ログ

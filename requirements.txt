@@ -1,5 +1,0 @@
-pillow
-keyboard
-pywin32
-pystray
-screeninfo
