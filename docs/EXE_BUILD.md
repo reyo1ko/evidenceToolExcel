@@ -1,110 +1,83 @@
-﻿# exe化手順書（Windows）
+# Rust版 exe化手順書
 
-Windows上でPyInstallerを使用し、単一のexeを作成します。以下はPowerShell用です。すべてプロジェクトのルート（`evidenceToolExcel.py` があるフォルダー）で実行してください。
+Windows上でRustのリリースビルドを行い、単体で実行できるexeを作成します。Python、venv、PyInstallerは使用しません。
 
-## 1. 環境を準備する
+## 1. Rustを準備する
 
-[README](../README.md)に従ってPythonとvenvを用意します。作成済みのvenvを有効化し、依存パッケージとビルドツールをインストールします。
+[Rust公式サイト](https://www.rust-lang.org/tools/install)から `rustup-init.exe` を取得し、既定のMSVCツールチェーンをインストールします。
 
-```powershell
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m pip install --upgrade pyinstaller
-```
-
-activateが使えない場合は、以降の `python` を `.\.venv\Scripts\python.exe` に置き換えます。
-
-Excelでテスト用ブックを開き、ソース版で撮影・画像追加ができることを確認してから終了します。
+新しいPowerShellを開き、次のコマンドで確認します。
 
 ```powershell
-python evidenceToolExcel.py
+rustc --version
+cargo --version
 ```
 
-## 2. アイコンを配置する
+どちらもバージョンが表示されれば準備完了です。
 
-用意した `.ico` ファイルを、ソースと同じ場所に `evidence_tool.ico` という名前で置きます。別名の場合はビルドコマンドの `--icon` も変更してください。
+## 2. アイコンを確認する
+
+次の場所にICOファイルを配置します。
 
 ```text
-プロジェクト/
-├─ evidenceToolExcel.py
-├─ evidence_tool.ico       ← 用意するアイコン
-├─ requirements.txt
-├─ README.md
-├─ .gitignore
-└─ docs/
-   └─ EXE_BUILD.md
+ico/evidence_tool.ico
 ```
 
-画像の拡張子を変更するだけではICO形式になりません。ICO形式で書き出したファイルを使用してください。`.ico` はGit管理対象です。
+`build.rs` がビルド時にこのアイコンをexeへ埋め込みます。ファイル名や場所を変更する場合は、`build.rs` の指定も変更してください。
 
-`--icon` はexeファイルのアイコンを設定します。現在のタスクトレイアイコンはコードで描画しているため、この指定では変わりません。ウィンドウやトレイにも同じアイコンを使う場合は、別途アプリ側の読み込み処理が必要です。
+## 3. コンパイル確認
 
-## 3. ビルドする
-
-起動中のツールを終了してから実行します。
+PowerShellでプロジェクトのルートを開きます。
 
 ```powershell
-python -m PyInstaller --clean --noconfirm --onefile --noconsole --name EvidenceToolExcel --icon "evidence_tool.ico" evidenceToolExcel.py
+cargo check
 ```
 
-| オプション | 内容 |
-| --- | --- |
-| `--clean` | ビルドキャッシュを削除してから作成 |
-| `--noconfirm` | 既存のビルド出力を確認なしで置き換え |
-| `--onefile` | 単一のexeにまとめる |
-| `--noconsole` | コンソールを表示しない |
-| `--name` | 出力するexeの名前 |
-| `--icon` | exeのICOファイル |
+初回は必要なRustクレートが自動でダウンロードされます。
 
-アイコンが未準備の場合は `--icon "evidence_tool.ico"` を省略して仮ビルドできます。
+## 4. 配布用exeをビルドする
 
-生成物は次のとおりです。
+```powershell
+cargo build --release
+```
+
+完成したexeはこちらです。
 
 ```text
-dist/EvidenceToolExcel.exe   配布用ファイル
-build/                      ビルド中間ファイル
-EvidenceToolExcel.spec       PyInstaller設定ファイル
+target/release/EvidenceToolExcel.exe
 ```
 
-これらは `.gitignore` で除外しています。この手順では毎回ソースとコマンドからビルドします。今後 `.spec` を手動編集して管理する場合は、`.gitignore` の `*.spec` を見直してください。
+このexeだけで起動できます。配布先にRustやPythonをインストールする必要はありません。Windowsとデスクトップ版Microsoft Excelは必要です。
 
-## 4. 動作確認する
+## 5. 配布用フォルダーへコピーする
 
-ソース版を終了し、Excelでテスト用ブックを開いて実行します。
+必要に応じて `dist` フォルダーへコピーします。
 
 ```powershell
-.\dist\EvidenceToolExcel.exe
+New-Item -ItemType Directory -Force dist | Out-Null
+Copy-Item .\target\release\EvidenceToolExcel.exe .\dist\EvidenceToolExcel.exe
 ```
 
-- exeにアイコンが表示され、ツールが起動すること
-- 貼り付け先の選択と `Ctrl+Shift+E` による範囲選択ができること
-- 画像を2回追加すると縦に並ぶこと
-- シート切り替え後は切り替え先に追加されること
-- Excelで保存して開き直しても画像が残ること
-- ツールを終了して再起動できること
+`target/`、`dist/`、`*.exe` は `.gitignore` で除外されています。GitHubで配布する場合は、`dist/EvidenceToolExcel.exe` をReleasesへ添付してください。
 
-## 5. 配布する
+## 6. 動作確認
 
-動作確認済みの `dist/EvidenceToolExcel.exe` を配布します。配布先にPythonやvenvは不要ですが、Windowsとデスクトップ版Excelが必要です。exeのアイコンはビルド時に埋め込まれるため、`.ico` の同梱は不要です。
+1. Excelでテスト用ブックを開きます。
+2. `EvidenceToolExcel.exe` を起動します。
+3. ツール画面で対象のブックとシートを選択します。
+4. 「スクリーンショットを撮る」を押し、範囲を選択します。
+5. 選択したシートへ画像が追加されることを確認します。
+6. 2回撮影し、画像が下方向へ並ぶことを確認します。
+7. Excelで保存して開き直し、画像が残っていることを確認します。
+8. `Ctrl+Shift+E` でも撮影を開始できることを確認します。
 
-GitHubではソースをリポジトリに登録し、exeはReleasesなどに添付できます。
+## ビルドし直す場合
 
-作業が終わったらvenvを解除します。
+通常は、そのまま `cargo build --release` を再実行すれば更新されます。中間生成物も含めて作り直す場合だけ、次を実行します。
 
 ```powershell
-deactivate
+cargo clean
+cargo build --release
 ```
 
-## 起動しない場合の調査用ビルド
-
-コンソール表示ありのexeを作成し、PowerShellから実行してエラーを確認します。
-
-```powershell
-python -m PyInstaller --clean --noconfirm --onefile --console --name EvidenceToolExcel-debug --icon "evidence_tool.ico" evidenceToolExcel.py
-.\dist\EvidenceToolExcel-debug.exe
-```
-
-ソース版とexe版は同時起動できません。「起動済み」と表示されたら既存のツールを終了してください。
-
-オプションの詳細は[PyInstaller公式ドキュメント](https://www.pyinstaller.org/en/stable/usage.html)を参照してください。
+`cargo clean` は `target/` 内の生成物を削除するため、実行後のビルドには時間がかかります。
