@@ -14,10 +14,13 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLACK_BRUSH, BeginPaint, BitBlt, CAPTUREBLT,
-    COLOR_WINDOW, CreateCompatibleBitmap, CreateCompatibleDC, CreatePen, CreateSolidBrush,
-    DIB_RGB_COLORS, DeleteDC, DeleteObject, EndPaint, FillRect, GetDC, GetDIBits, GetStockObject,
-    HBRUSH, HGDIOBJ, InvalidateRect, NULL_BRUSH, PAINTSTRUCT, PS_SOLID, Rectangle, ReleaseDC,
-    SRCCOPY, SelectObject, SetBkMode, SetTextColor, TRANSPARENT, TextOutW, UpdateWindow,
+    CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, COLOR_WINDOW, CreateCompatibleBitmap,
+    CreateCompatibleDC, CreateFontW, CreatePen, CreateSolidBrush, DEFAULT_CHARSET, DEFAULT_PITCH,
+    DIB_RGB_COLORS, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW,
+    EndPaint, FW_NORMAL, FillRect, GetDC, GetDIBits, GetStockObject, GetSysColorBrush, HBRUSH, HDC,
+    HFONT, HGDIOBJ, InvalidateRect, NULL_BRUSH, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID,
+    Rectangle, ReleaseDC, RoundRect, SRCCOPY, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    TextOutW, UpdateWindow,
 };
 use windows::Win32::System::Com::{
     CLSIDFromProgID, COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize, DISPATCH_FLAGS,
@@ -25,6 +28,12 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Ole::GetActiveObject;
+use windows::Win32::System::SystemServices::SS_CENTER;
+use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, ODS_SELECTED};
+use windows::Win32::UI::HiDpi::{
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, GetDpiForWindow,
+    SetProcessDpiAwarenessContext,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOD_CONTROL, MOD_SHIFT, RegisterHotKey, ReleaseCapture, SetCapture, SetFocus, UnregisterHotKey,
     VK_ESCAPE,
@@ -46,6 +55,7 @@ static mut STATUS_HWND: HWND = HWND(null_mut());
 static mut WORKBOOK_HWND: HWND = HWND(null_mut());
 static mut SHEET_HWND: HWND = HWND(null_mut());
 static mut OVERLAY_HWND: HWND = HWND(null_mut());
+static mut UI_FONT: HFONT = HFONT(null_mut());
 static mut START: POINT = POINT { x: 0, y: 0 };
 static mut CURRENT: POINT = POINT { x: 0, y: 0 };
 static mut DRAGGING: bool = false;
@@ -64,6 +74,11 @@ type AppResult<T> = Result<T, String>;
 
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
+}
+
+unsafe extern "system" fn set_child_font(hwnd: HWND, font: LPARAM) -> BOOL {
+    SendMessageW(hwnd, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+    BOOL(1)
 }
 
 unsafe fn set_status(text: &str) {
@@ -112,6 +127,8 @@ unsafe fn create_main_window() -> AppResult<HWND> {
         HBRUSH(GetStockObject(BLACK_BRUSH).0),
     )?;
     let instance = GetModuleHandleW(None).map_err(|e| e.to_string())?;
+    let dpi = GetDpiForSystem().max(96) as i32;
+    let s = |value: i32| (value * dpi + 48) / 96;
     let class_name = wide(MAIN_CLASS);
     let title = wide("エビデンス貼り付けツール");
     let hwnd = CreateWindowExW(
@@ -121,8 +138,8 @@ unsafe fn create_main_window() -> AppResult<HWND> {
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        470,
-        345,
+        s(520),
+        s(360),
         None,
         None,
         HINSTANCE(instance.0),
@@ -132,31 +149,16 @@ unsafe fn create_main_window() -> AppResult<HWND> {
     MAIN_HWND = hwnd;
     let static_class = wide("STATIC");
     let button_class = wide("BUTTON");
-    let heading = wide("Excel エビデンス貼り付けツール");
-    CreateWindowExW(
-        Default::default(),
-        PCWSTR(static_class.as_ptr()),
-        PCWSTR(heading.as_ptr()),
-        WS_CHILD | WS_VISIBLE,
-        90,
-        16,
-        300,
-        26,
-        hwnd,
-        None,
-        HINSTANCE(instance.0),
-        None,
-    );
     let workbook_label = wide("貼り付け先のExcelブック");
     CreateWindowExW(
         Default::default(),
         PCWSTR(static_class.as_ptr()),
         PCWSTR(workbook_label.as_ptr()),
         WS_CHILD | WS_VISIBLE,
-        30,
-        50,
-        250,
-        22,
+        s(28),
+        s(24),
+        s(300),
+        s(22),
         hwnd,
         None,
         HINSTANCE(instance.0),
@@ -168,10 +170,10 @@ unsafe fn create_main_window() -> AppResult<HWND> {
         PCWSTR(combo_class.as_ptr()),
         PCWSTR::null(),
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
-        30,
-        72,
-        310,
-        180,
+        s(28),
+        s(49),
+        s(352),
+        s(200),
         hwnd,
         HMENU(ID_WORKBOOK as *mut _),
         HINSTANCE(instance.0),
@@ -184,10 +186,10 @@ unsafe fn create_main_window() -> AppResult<HWND> {
         PCWSTR(button_class.as_ptr()),
         PCWSTR(refresh.as_ptr()),
         WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_PUSHBUTTON as u32),
-        355,
-        72,
-        80,
-        28,
+        s(394),
+        s(49),
+        s(98),
+        s(32),
         hwnd,
         HMENU(ID_REFRESH as *mut _),
         HINSTANCE(instance.0),
@@ -200,10 +202,10 @@ unsafe fn create_main_window() -> AppResult<HWND> {
         PCWSTR(static_class.as_ptr()),
         PCWSTR(sheet_label.as_ptr()),
         WS_CHILD | WS_VISIBLE,
-        30,
-        110,
-        250,
-        22,
+        s(28),
+        s(94),
+        s(300),
+        s(22),
         hwnd,
         None,
         HINSTANCE(instance.0),
@@ -214,26 +216,26 @@ unsafe fn create_main_window() -> AppResult<HWND> {
         PCWSTR(combo_class.as_ptr()),
         PCWSTR::null(),
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
-        30,
-        132,
-        405,
-        180,
+        s(28),
+        s(119),
+        s(464),
+        s(200),
         hwnd,
         HMENU(ID_SHEET as *mut _),
         HINSTANCE(instance.0),
         None,
     )
     .map_err(|e| e.to_string())?;
-    let guide = wide("Excelを開き、ブックとシートを選択してください");
+    let guide = wide("Excelが開かれていません。\r\nExcelを起動して［再読込］を押してください。");
     STATUS_HWND = CreateWindowExW(
         Default::default(),
         PCWSTR(static_class.as_ptr()),
         PCWSTR(guide.as_ptr()),
-        WS_CHILD | WS_VISIBLE,
-        30,
-        177,
-        405,
-        30,
+        WS_CHILD | WS_VISIBLE | WINDOW_STYLE(SS_CENTER.0),
+        s(28),
+        s(165),
+        s(464),
+        s(42),
         hwnd,
         None,
         HINSTANCE(instance.0),
@@ -245,11 +247,11 @@ unsafe fn create_main_window() -> AppResult<HWND> {
         Default::default(),
         PCWSTR(button_class.as_ptr()),
         PCWSTR(capture.as_ptr()),
-        WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_PUSHBUTTON as u32),
-        55,
-        215,
-        350,
-        38,
+        WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_OWNERDRAW as u32),
+        s(70),
+        s(217),
+        s(380),
+        s(48),
         hwnd,
         HMENU(ID_CAPTURE as *mut _),
         HINSTANCE(instance.0),
@@ -262,22 +264,42 @@ unsafe fn create_main_window() -> AppResult<HWND> {
         PCWSTR(button_class.as_ptr()),
         PCWSTR(exit.as_ptr()),
         WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_PUSHBUTTON as u32),
-        180,
-        270,
-        100,
-        30,
+        s(200),
+        s(285),
+        s(120),
+        s(34),
         hwnd,
         HMENU(ID_EXIT as *mut _),
         HINSTANCE(instance.0),
         None,
     )
     .map_err(|e| e.to_string())?;
+    let face = wide("Yu Gothic UI");
+    UI_FONT = CreateFontW(
+        -s(15),
+        0,
+        0,
+        0,
+        FW_NORMAL.0 as i32,
+        0,
+        0,
+        0,
+        DEFAULT_CHARSET.0 as u32,
+        OUT_DEFAULT_PRECIS.0 as u32,
+        CLIP_DEFAULT_PRECIS.0 as u32,
+        CLEARTYPE_QUALITY.0 as u32,
+        DEFAULT_PITCH.0 as u32,
+        PCWSTR(face.as_ptr()),
+    );
+    EnumChildWindows(hwnd, Some(set_child_font), LPARAM(UI_FONT.0 as isize));
     if RegisterHotKey(hwnd, HOTKEY_ID, MOD_CONTROL | MOD_SHIFT, 'E' as u32).is_err() {
         set_status("ホットキーを登録できません。ボタンから撮影できます。");
     }
     match refresh_targets() {
         Ok(()) => set_status("貼り付け先を選択して撮影してください"),
-        Err(_) => set_status("Excelが開かれていません。Excelを起動して再読込してください"),
+        Err(_) => {
+            set_status("Excelが開かれていません。\r\nExcelを起動して［再読込］を押してください。")
+        }
     }
     Ok(hwnd)
 }
@@ -303,6 +325,7 @@ unsafe fn variant_string(value: &VARIANT, label: &str) -> AppResult<String> {
 }
 
 unsafe fn refresh_targets() -> AppResult<()> {
+    let previous = selected_target_names().ok();
     let excel = connect_excel()?;
     let workbooks = as_dispatch(&property(&excel, "Workbooks")?, "ブック一覧")?;
     let count = i32::try_from(&property(&workbooks, "Count")?)
@@ -344,6 +367,22 @@ unsafe fn refresh_targets() -> AppResult<()> {
         targets.push(WorkbookTarget { name, sheets });
     }
 
+    let workbook_index = previous
+        .as_ref()
+        .and_then(|(book_name, _)| targets.iter().position(|book| book.name == *book_name))
+        .unwrap_or(0);
+    let preferred_sheet = previous.as_ref().and_then(|(book_name, sheet_name)| {
+        targets
+            .get(workbook_index)
+            .filter(|book| book.name == *book_name)
+            .and_then(|book| {
+                book.sheets
+                    .iter()
+                    .any(|sheet| sheet == sheet_name)
+                    .then(|| sheet_name.clone())
+            })
+    });
+
     let store = TARGETS.get_or_init(|| Mutex::new(Vec::new()));
     *store
         .lock()
@@ -361,13 +400,21 @@ unsafe fn refresh_targets() -> AppResult<()> {
             LPARAM(name.as_ptr() as isize),
         );
     }
-    SendMessageW(WORKBOOK_HWND, CB_SETCURSEL, WPARAM(0), LPARAM(0));
+    SendMessageW(
+        WORKBOOK_HWND,
+        CB_SETCURSEL,
+        WPARAM(workbook_index),
+        LPARAM(0),
+    );
     drop(targets);
-    populate_sheet_combo(0)?;
+    populate_sheet_combo(workbook_index, preferred_sheet.as_deref())?;
     Ok(())
 }
 
-unsafe fn populate_sheet_combo(workbook_index: usize) -> AppResult<()> {
+unsafe fn populate_sheet_combo(
+    workbook_index: usize,
+    preferred_sheet: Option<&str>,
+) -> AppResult<()> {
     SendMessageW(SHEET_HWND, CB_RESETCONTENT, WPARAM(0), LPARAM(0));
     let targets = TARGETS
         .get_or_init(|| Mutex::new(Vec::new()))
@@ -386,7 +433,10 @@ unsafe fn populate_sheet_combo(workbook_index: usize) -> AppResult<()> {
         );
     }
     if !target.sheets.is_empty() {
-        SendMessageW(SHEET_HWND, CB_SETCURSEL, WPARAM(0), LPARAM(0));
+        let sheet_index = preferred_sheet
+            .and_then(|name| target.sheets.iter().position(|sheet| sheet == name))
+            .unwrap_or(0);
+        SendMessageW(SHEET_HWND, CB_SETCURSEL, WPARAM(sheet_index), LPARAM(0));
     }
     Ok(())
 }
@@ -534,14 +584,16 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) 
                 ID_REFRESH => match refresh_targets() {
                     Ok(()) => set_status("一覧を更新しました。貼り付け先を選択してください"),
                     Err(e) => {
-                        set_status("Excelの一覧を取得できませんでした");
+                        set_status(
+                            "Excelの一覧を取得できませんでした。\r\nExcelを確認して［再読込］を押してください。",
+                        );
                         show_error(&e);
                     }
                 },
                 ID_WORKBOOK if notification == CBN_SELCHANGE as usize => {
                     let index = SendMessageW(WORKBOOK_HWND, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0;
                     if index >= 0 {
-                        if let Err(e) = populate_sheet_combo(index as usize) {
+                        if let Err(e) = populate_sheet_combo(index as usize, None) {
                             show_error(&e);
                         }
                     }
@@ -561,8 +613,71 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) 
             }
             LRESULT(0)
         }
+        WM_CTLCOLORSTATIC => {
+            let dc = HDC(w.0 as *mut _);
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, COLORREF(0x00202020));
+            LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize)
+        }
+        WM_DRAWITEM => {
+            let item = &*(l.0 as *const DRAWITEMSTRUCT);
+            if item.CtlID == ID_CAPTURE as u32 {
+                let pressed = item.itemState.0 & ODS_SELECTED.0 != 0;
+                // 先に親画面と同じ色で消去し、余白を取った角丸ボタンを描画する。
+                FillRect(item.hDC, &item.rcItem, GetSysColorBrush(COLOR_WINDOW));
+                let background = if pressed {
+                    COLORREF(0x00a65406)
+                } else {
+                    COLORREF(0x00d96d00)
+                };
+                let brush = CreateSolidBrush(background);
+                let pen = CreatePen(PS_SOLID, 1, background);
+                let old_pen = SelectObject(item.hDC, HGDIOBJ(pen.0));
+                let old_brush = SelectObject(item.hDC, HGDIOBJ(brush.0));
+                RoundRect(
+                    item.hDC,
+                    item.rcItem.left + 2,
+                    item.rcItem.top + 2,
+                    item.rcItem.right - 2,
+                    item.rcItem.bottom - 2,
+                    12,
+                    12,
+                );
+                SelectObject(item.hDC, old_pen);
+                SelectObject(item.hDC, old_brush);
+                DeleteObject(HGDIOBJ(pen.0));
+                DeleteObject(HGDIOBJ(brush.0));
+
+                SetBkMode(item.hDC, TRANSPARENT);
+                SetTextColor(item.hDC, COLORREF(0x00ffffff));
+                let old_font = if UI_FONT.0.is_null() {
+                    HGDIOBJ(null_mut())
+                } else {
+                    SelectObject(item.hDC, HGDIOBJ(UI_FONT.0))
+                };
+                let mut label: Vec<u16> = "スクリーンショットを撮る  (Ctrl+Shift+E)"
+                    .encode_utf16()
+                    .collect();
+                let mut text_rect = item.rcItem;
+                DrawTextW(
+                    item.hDC,
+                    &mut label,
+                    &mut text_rect,
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                );
+                if !old_font.0.is_null() {
+                    SelectObject(item.hDC, old_font);
+                }
+                return LRESULT(1);
+            }
+            DefWindowProcW(hwnd, msg, w, l)
+        }
         WM_DESTROY => {
             UnregisterHotKey(hwnd, HOTKEY_ID);
+            if !UI_FONT.0.is_null() {
+                DeleteObject(HGDIOBJ(UI_FONT.0));
+                UI_FONT = HFONT(null_mut());
+            }
             PostQuitMessage(0);
             LRESULT(0)
         }
@@ -727,9 +842,21 @@ unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARA
 unsafe fn capture_and_insert(left: i32, top: i32, right: i32, bottom: i32) -> AppResult<()> {
     let width = right - left;
     let height = bottom - top;
+    // Excelのサイズ単位はポイント。選択範囲の中心にあるウィンドウのDPIで
+    // px→pt変換し、高DPIモニターの画像が96 DPI前提で引き伸ばされるのを防ぐ。
+    let center = POINT {
+        x: left + width / 2,
+        y: top + height / 2,
+    };
+    let target_window = WindowFromPoint(center);
+    let capture_dpi = if target_window.0.is_null() {
+        GetDpiForSystem().max(96)
+    } else {
+        GetDpiForWindow(target_window).max(96)
+    };
     let path = temp_bmp_path();
     capture_bmp(left, top, width, height, &path)?;
-    let result = insert_into_excel(&path, width, height);
+    let result = insert_into_excel(&path, width, height, capture_dpi);
     let _ = fs::remove_file(&path);
     result
 }
@@ -884,7 +1011,12 @@ unsafe fn as_dispatch(value: &VARIANT, label: &str) -> AppResult<IDispatch> {
     IDispatch::try_from(value).map_err(|_| format!("Excelの {} を参照できません。", label))
 }
 
-unsafe fn insert_into_excel(path: &Path, width: i32, height: i32) -> AppResult<()> {
+unsafe fn insert_into_excel(
+    path: &Path,
+    width: i32,
+    height: i32,
+    capture_dpi: u32,
+) -> AppResult<()> {
     let sheet = if WORKBOOK_HWND.0.is_null() {
         resolve_active_sheet()?
     } else {
@@ -932,9 +1064,10 @@ unsafe fn insert_into_excel(path: &Path, width: i32, height: i32) -> AppResult<(
     }
     let filename = path.to_string_lossy().to_string();
     // COMでは引数を逆順で渡す: Height, Width, Top, Left, SaveWithDocument, LinkToFile, Filename
+    let points_per_pixel = 72.0 / capture_dpi.max(96) as f64;
     let mut args = [
-        VARIANT::from(height as f64 * 0.75),
-        VARIANT::from(width as f64 * 0.75),
+        VARIANT::from(height as f64 * points_per_pixel),
+        VARIANT::from(width as f64 * points_per_pixel),
         VARIANT::from(next_top),
         VARIANT::from(10.0f64),
         VARIANT::from(true),
@@ -947,6 +1080,8 @@ unsafe fn insert_into_excel(path: &Path, width: i32, height: i32) -> AppResult<(
 
 fn main() {
     unsafe {
+        // 複数ディスプレイで拡大率が異なっても、選択座標と取得ピクセルを一致させる。
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         if let Err(e) = CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok() {
             let body = wide(&format!("初期化に失敗しました: {e}"));
             let title = wide("エラー");
